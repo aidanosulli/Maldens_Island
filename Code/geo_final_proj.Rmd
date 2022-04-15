@@ -1,0 +1,284 @@
+---
+title: "Geo Statistics Final Project"
+author: "Aidan O'Sullivan"
+date: "3/10/2021"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+#Introduction
+
+For my final project, I chose to analyze buoy data around Malden Island, just south of the Equator in the central Pacific. These buoys, which help researchers track trends used for El Nino and La Nina prediction, monitor features such as Zonal Wind, Meridional Winds, Humidity, Air Temperature, Sea Surface Temperatur, and of course longitude and latitude. 
+
+
+After initial analysis, I decided to predict relative air humidity, as this was the most normally distributed variable available that also has a noted scientific impact as a greenhouse gas and foreteller of precipitation. Relative Humidity is measured as the current point pressure in the air divided by the pressure point at which water vapor saturates the air, then multiplied by 100 to create a percentage. The higher the percentage, the more moisture resides in the air. 
+
+
+\pagebreak
+
+#Data Source
+
+![Kaggle El Nino Data](/Users/aidanosullivan/Desktop/Kaggle.png)
+
+I collected my data from Kaggle's explore page, though its ultimate source is the University of California at Irvine Machine Learning Data Archive This particular dataset tracked tens of thousands of buoys across the equatorial Pacific from the years 1992 through 1997.
+
+##Location
+Due to the initial size of the dataset - 1780,000 observation from tens of thousands of buoys - I narrowed my point of interest to Malden Island, and an uninhabited "recursive" island located along popular shipping routes. Within 10 nautical miles of the island, there are 55 unique buoy observations between the years 1992 and 1997. Because the buoys move ever so slightly from year to year and the the data between these particular years was so similiar, I decided not to perform time series analysis and just view the five year collection period as a single, long-term period of data collection. 
+
+```{r, include=FALSE}
+source("geo_final_proj.R")
+```
+
+
+![Malden Island Buoys](/Users/aidanosullivan/Desktop/Malden.png)
+```{r}
+library(oceanmap)
+# lon <- c(-155.1, -154.6) 
+# lat <- c(-5.2, -4)
+# figure(width =9, height =5.28)
+# plot (elnino$Longitude, elnino$Latitude, xlim =lon , ylim = lat )
+# plotmap (main = "Buoys South of Malden Island", add=T)
+# points(elnino$Longitude, elnino$Latitude, pch = 1)
+```
+
+
+
+With the narrowed down dataset, I then set to work checking the various distributions of target variables, the correlation between then, as well as outliers. In this report, I will focus upon Humidity, as that became the target variable of choice. 
+
+#Data Exploration
+
+```{r}
+s = seq(60,90, by = 0.001)
+hist(elnino$Humidity, main = "El Nino Relative Humidity", xlab = "Relative Humidity (%)", col = "turquoise", freq = F)
+lines(s, dnorm(s, mean(elnino$Humidity),sd(elnino$Humidity)), col = "blue")
+legend("topright", legend=c("Normal Curve"), col=c("blue"), lty=1, cex=0.8)
+```
+\ 
+As we can see from the above history, Relative Humidity across the 55 loctions is extremeley normall distributed, even given the small sample size. 
+
+
+```{r}
+par(mfrow= c(1,3))
+a <- as.data.frame(elnino)
+boxplot(a$Humidity, main = 'Humidity (%)', ylab = "Percent Humidity", col = "turquoise")
+boxplot(a$Air.Temp, main = 'Air Temperature', ylab = "Degrees Celcius")
+boxplot(a$Sea.Surface.Temp, main = 'Sea Surface Temperature', ylab  = "Degrees Celcius")
+```
+\
+Next, by looking at the boxplots of Humidity, Air Temperature, and Sea Surface Temperature, we can see there are very few outliers. In fact, regarding Humidity, the only notable outliers are those observations with low humidity. Fortunately, as we can see from the point plot below, these observations of low humidity are clumped together such that they add interesting variation to the data. In other words, they are points of high leverage. 
+
+####Plot of Buoys by Humidity
+
+![Humidity Across Buoys south of Malden Island](/Users/aidanosullivan/Desktop/Humidity_buoys.png)
+```{r}
+#Humidity_buoy
+```
+
+##Correlation
+
+###General Correlation
+```{r}
+upper_correlation
+```
+\
+The only notable correlation found in the dataset is between Air Temperature and Sea Surface Temperature, which makes a lot of sense. Zonal winds and Sea Surface Temperature have the next highest correlation, though not even breaking the 0.5 mark. Lastly, Humidity appears negatively correlated with Air Temperature, which also makes sense given how Humidity is calculated. This does not bode well for future co-kriging. 
+
+
+###Spatial Correlation
+```{r}
+elnino2 <- elnino
+coordinates(elnino2) <- ~Longitude+Latitude
+qq_h <- hscat(Humidity~1, data = elnino2, c(0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08)) 
+plot(qq_h, main=" Humidity Scatterplots")
+```
+\
+Lastly, we turn to the h-scatterplots to quantify spatial correlation at various distances, measured generally in units. In this case, the distances are extremely minimal since the buoys are so close together; additionally, the overall correlation is small as well. Even at the closest distance, correlation is only about 0.346 and falls to nearly 0 as the distances increase.  
+
+
+#Methodology
+
+###Variograms
+
+Now that the data has been thoroughly explored, the next step of the geostatistical analysis is to understand the anisotropy of the buoy data, determine trends in the data, and finally plot and fit variograms
+
+
+####Rose Diagram - Checking for Anisotropy
+
+```{r}
+#Compute the coordinates:
+theta <- c(0, pi/9, pi/4.5, pi/3, pi/2.25, pi/18, pi/6, pi/3.6, pi/2.571)
+range <- c(0.05, 0.05, 0.05, 0.05, 0.05, 0.045, 0.045, 0.045, 0.045)
+x1 <- cos(theta[1:5])*range[1:5]
+y1 <- sin(theta[1:5])*range[1:5]
+x2 <- range[6:9]*sin(theta[6:9])
+y2 <- -range[6:9]*cos(theta[6:9])
+x11 <- -x1
+y11 <- -y1
+x22 <- -x2
+y22 <- -y2
+plot(x1,y1, xlim=c(-.1,.1), ylim=c(-.1,.1), xaxt="n", yaxt="n",
+ylab="y", xlab="x", main = "El Nino Buoy Rose Diagram")
+points(x11,y11)
+points(x2,y2)
+points(x22,y22)
+segments(x1,y1, x11, y11)
+segments(x2,y2, x22, y22)
+segments(0, -34.8, 0, 34.8, lty=2)
+segments(-28, 0, 28, 0, lty=2)
+```
+\
+Given the nearly circular shape of the Rose diagram, we can conclude that the data is not direction-dependent, but rather direction-independent. In other words, the data is more or less isotropic, not anisotropic. No adjustments must be made to the data. 
+
+
+####Fit Model Variogram
+
+
+The next step is to fit a model variogram. We will begin by using the normal estimator, and choose between a spherical model, exponential model, and linear model. 
+```{r}
+best_fit_normal
+```
+\
+Based on the several model options available, the best model variogram is the Spherical model with a sill of 20.25 and a range of 0.022 units. 
+
+
+```{r}
+par(mfrow= c(2,1))
+plot(vario_normal, main = "Sample Variogram, Normal Estimator")
+plot(vario_normal, best_fit_normal, main = "Fitted Sample Variogram, Normal Estimator")
+```
+
+
+###Kriging
+
+Next, I will perform basic kriging along with co-kriging before using cross validation to choose between models. 
+
+I will perform oridinary kriging using the best fit spherical model found previously. 
+
+
+
+```{r}
+#Create the Raster Map for Ordinary Kriging with Normal Estimator
+
+#condense predicted points 
+qqq <- matrix(el_ok$Humidity.pred,length(seq(from=-155.03, to=-154.925, by=0.001)), length(seq(from=-5.03, to=-4.96, by=0.001)))
+image.orig <- image
+
+#Raster map:
+image.orig(seq(from=-155.03, to=-154.925, by = 0.001),seq(from=-5.03, to=-4.96, by=0.001), qqq, xlab="West to East",ylab="South to North", main="Predicted values")
+
+#Add contours
+
+contour(seq(from=-155.03,to=-154.925, by=0.001), seq(from=-5.03, to=-4.96, by=0.001), qqq, add=TRUE, col="black", levels=seq(20, 80, by=5), labcex=1)
+
+#Add Points
+points(a$x, a$y)
+```
+\
+From this heat map, we can see that the buoys around -4.99 South and -154.96 West predict the highest humidity in the air. Just to the northwest of this spot, the buoys predict the lowest relative humidity in the microclimate. There is a possible corridor of lower humidity down the center of spine of the buoys. 
+
+
+###Co-Kriging
+
+In effort increase prediction accuracy but reducing prediction variance, we will now consider co-kriging, a system of kriging that harnesses correlation between a target variable such as Humidity and other co-target variables. In this case, I selected Air Temperature as the only co-target. Air Temperature is negatively correlated with Humidity by a correlation value of -0.26. This is a weak connection, but may still serve to decrease the PRESS score of the model. 
+
+```{r}
+plot(vm, vm.fit)
+```
+
+```{r}
+levelplot(predicted_ck$Humidity.pred~x+y, predicted_ck, aspect = "iso", main = "Co-Kriging Humidity Predictions")
+```
+
+The co-kriging also exactly replicated the odinary kriging model. 
+
+###Cross Validation
+
+Cross validation is a useful process to compare the accuracy of various models on a dataset while also reducing the risk of overfitting. 
+
+For the cross validation exercise, I will compare several different models:\
+\
+1. Ordinary Kriging with Normal Estimator\
+2. Ordinary Kriging with Robust Estimator\
+3. Universal Kriging with Normal Estimator\
+4. Universal Kriging with Robust Estimator\
+\
+Additionally, I will compare the winner of these models against a Co-Kriging Model.  
+
+
+
+```{r}
+#Ordinary Kriging vs. Universal Kriging
+answer
+```
+\
+After the first round of Cross-Validation, we can that there is very little difference in PRESS score between the many model. In fact, all the models have the exact same PRESS score except the Universal Kriging model with the normal estimator.  Therefore, we can assume that the outliers in the dataset do not decrease the accuracy of the model, and that in future test we should use the best, simplest model availbe - the Ordinary Kriging model with the normal estimator. 
+
+```{r, message=F}
+#Co Kriging Cross Validation
+answer2
+```
+\
+Next, we will use Cross Validation to compare the winner of the previous round - Ordinary Kriging with normal estimator - with the co-kriging model. Here, we have a clear winner. The Co-kriging model successfully used what little correlation was available and the PRESS value fell accordingly
+
+
+\pagebreak
+
+#Results
+
+Now that we know that co-kriging is the best model, we use it to make final predictions. 
+
+##Final Predictions
+```{r}
+qqq2 <- matrix(predicted_ck$Humidity.pred,length(seq(from=-155.03, to=-154.925, by=0.001)), length(seq(from=-5.03, to=-4.96, by=0.001)))
+image.orig <- image
+#Raster map:
+image.orig(seq(from=-155.03, to=-154.925, by = 0.001),seq(from=-5.03, to=-4.96, by=0.001), qqq2, xlab="West to East",ylab="South to North", main=" Co-Kriging Predicted Humidity Values")
+
+
+#Add contours
+
+contour(seq(from=-155.03,to=-154.925, by=0.001), seq(from=-5.03, to=-4.96, by=0.001), qqq2, add=TRUE, col="black", levels=seq(20, 80, by=5), labcex=1)
+
+#Add Points
+points(a$x, a$y)
+```
+\
+The final prediction model is almost indistinguishable from earlier models, even though mathetically speaking it is more accurate. 
+
+
+##Final Prediction Variances
+```{r}
+
+qqq3 <- matrix(predicted_ck$Humidity.var,length(seq(from=-155.03, to=-154.925, by=0.001)), length(seq(from=-5.03, to=-4.96, by=0.001)))
+image.orig <- image
+#Raster map:
+image.orig(seq(from=-155.03, to=-154.925, by = 0.001),seq(from=-5.03, to=-4.96, by=0.001), qqq3, xlab="West to East",ylab="South to North", main=" Co-Kriging Variance of Predicted Values")
+
+
+#Add contours
+
+contour(seq(from=-155.03,to=-154.925, by=0.001), seq(from=-5.03, to=-4.96, by=0.001), qqq3, add=TRUE, col="black", levels=seq(20, 80, by=5), labcex=1)
+
+#Add Points
+points(a$x, a$y)
+
+```
+\
+The variance of the predictions increases drastically as the predicted points move away from the observed buoys. This is why the grid of prediction has been reduced to area directly around the buoys and excludes even the sea around Malden Island. 
+
+\pagebreak
+
+
+
+#Conclusion
+
+
+This report concludes that a co-kriging model of Humidity and Air Temperature with a normal estimator is the best model to predict Humidity in the sea region south of Malden Island. Also, the spherical model is the best variogram model fit for the data. 
+
+Further research should be performed to extrapolate these findings to a larger radius of interest. This dataset of buoys collecting data between 1992 and 1997 across the entire equitorial Pacific Ocean only inlcudes dense collections of observed points separated by hundreds of miles of open ocean, a horrible combination for spatial prediction. Still, this research may be useful in determining interesting patterns of correlation between Humidity and sea life, or possibly tip off workers to malfunctioning buoys. 
+
